@@ -90,6 +90,7 @@ def steering_hook(resid_pre, hook):
 
     position = sae_out.shape[1]
     if steering_on:
+      breakpoint()
       # using our steering vector and applying the coefficient
       resid_pre[:, :position - 1, :] += coeff * steering_vector
 
@@ -119,7 +120,7 @@ def run_generate(example_prompt):
   print(("\n\n" + "-" * 80 + "\n\n").join(res_str))
 
 
-steering_on = False
+steering_on = True
 run_generate(example_prompt)
 
 

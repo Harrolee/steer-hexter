@@ -44,32 +44,17 @@ class Inference:
         self.cfg_dict = cfg_dict
 
     def _get_sae_out_and_feature_activations(self):
+        # given the words in steering_vectore_prompt, the SAE predicts that the neurons(aka features) in activateCache will be activated
         sv_logits, activationCache = self.model.run_with_cache(self.steering_vector_prompt, prepend_bos=True)
         sv_feature_acts = self.sae.encode(activationCache[self.sae.cfg.hook_name])
+        breakpoint();
         # get top_k of 1
         # self.sae_out = sae.decode(sv_feature_acts) 
         return self.sae.decode(sv_feature_acts), sv_feature_acts
 
-    def _hooked_generate(self, prompt_batch, seed=None, **kwargs):
-        coeff = self.coeff
-        sae_out, sv_feature_acts = self._get_sae_out_and_feature_activations()
-        feature = self._get_feature(sv_feature_acts)
-        steering_vector = self.sae.W_dec[feature]
-
-        def steering_hook(self, resid_pre, hook):
-            if resid_pre.shape[1] == 1:
-                return
-
-            position = sae_out.shape[1]
-            # using our steering vector and applying the coefficient
-            resid_pre[:, :position - 1, :] += coeff * steering_vector
-
+    def _hooked_generate(self, prompt_batch, fwd_hooks, seed=None, **kwargs):
         if seed is not None:
             torch.manual_seed(seed)
-
-
-        fwd_hooks = [(self.sae_id, steering_hook)]
-
 
         with self.model.hooks(fwd_hooks=fwd_hooks):
             tokenized = self.model.to_tokens(prompt_batch)
@@ -81,16 +66,51 @@ class Inference:
                 **kwargs)
         return result
 
-    def _get_feature(self, sv_feature_activations):
+    def _get_features(self, sv_feature_activations):
         # return torch.topk(sv_feature_acts, 1).indices.tolist()
         print(f'is this a single index? {torch.topk(sv_feature_activations, 1).indices}')
-        return torch.topk(sv_feature_activations, 1).indices
+        features = torch.topk(sv_feature_activations, 1).indices
+        print(f'features that align with the text prompt: {features}')
+        return features
+
+    
+    def _get_steering_hook(self, feature, sae_out):
+        coeff = self.coeff
+        steering_vector = self.sae.W_dec[feature]
+        # if this works, enforce sending one word at a time
+        breakpoint();
+        steering_vector = steering_vector[0]
+        def steering_hook(resid_pre, hook):
+            if resid_pre.shape[1] == 1:
+                return
+
+            position = sae_out.shape[1]
+            # using our steering vector and applying the coefficient
+            resid_pre[:, :position - 1, :] += coeff * steering_vector
+        
+        return steering_hook
+
+    def _get_steering_hooks(self):
+        sae_out, sv_feature_acts = self._get_sae_out_and_feature_activations()
+        # breakpoint(); # what's the shape of sae_out? does it make sense to pass the whole thing to get_steering_hook every time?
+        features = self._get_features(sv_feature_acts)
+        breakpoint();
+        steering_hooks = [self._get_steering_hook(feature, sae_out) for feature in features[0]]
+
+        return steering_hooks
+
 
     def _run_generate(self, example_prompt, steering_on: bool):
-        self.model.reset_hooks()
+        
 
+        self.model.reset_hooks()
+        steer_hooks = self._get_steering_hooks()
+        editing_hooks = [ (self.sae_id, steer_hook) for steer_hook in steer_hooks]
+        # editing_hooks = [(self.sae_id, steer_hook)]
+        # ^^change this to support steer_hooks being a list of steer_hooks
+        print(f"steering by {len(editing_hooks)} hooks")
         if steering_on: 
-            res = self._hooked_generate([example_prompt] * 3, seed=None, **self.sampling_kwargs)
+            res = self._hooked_generate([example_prompt] * 3, editing_hooks, seed=None, **self.sampling_kwargs)
         else:
             tokenized = self.model.to_tokens([example_prompt])
             res = self.model.generate(
@@ -127,21 +147,14 @@ default_image = "Hexter-Hackathon.png"
 
 def slow_echo(message, history):
     result = chatbot_model.generate(message, False)
-    breakpoint()
     for i in range(len(result)):
-        time.sleep(0.08)
+        time.sleep(0.01)
         yield result[: i + 1]
 def slow_echo_steering(message, history):
     result = chatbot_model.generate(message, True)
-    breakpoint()
     for i in range(len(result)):
-        time.sleep(0.08)
+        time.sleep(0.01)
         yield result[: i + 1]
-
-def onSubmit(temp, coeff, steer):
-    print('steer ' + str(steer))
-    print('temp ' + str(temp))
-    print('coeff ' + str(coeff))
 
 with gr.Blocks() as demo:
     with gr.Row():
@@ -173,11 +186,9 @@ with gr.Blocks() as demo:
     with gr.Row():
         steering_prompt = gr.Textbox(label="Steering prompt", value="Golden Gate Bridge")
     with gr.Row():
-        coeff = gr.Slider(1, 30, 25, label="Coefficient", info="Coefficient is..", interactive=True)
+        coeff = gr.Slider(1, 1000, 300, label="Coefficient", info="Coefficient is..", interactive=True)
     with gr.Row():
-        temp = gr.Slider(0, 90, 45, label="Temperature", info="Temperature is..", interactive=True)
-    with gr.Row():
-        steer = gr.Checkbox(label="Steer")
+        temp = gr.Slider(0, 5, 1, label="Temperature", info="Temperature is..", interactive=True)
 
     # Set up an action when the sliders change
     temp.change(chatbot_model.set_temperature, inputs=[temp], outputs=[])
