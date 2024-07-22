@@ -47,7 +47,6 @@ class Inference:
         # given the words in steering_vectore_prompt, the SAE predicts that the neurons(aka features) in activateCache will be activated
         sv_logits, activationCache = self.model.run_with_cache(self.steering_vector_prompt, prepend_bos=True)
         sv_feature_acts = self.sae.encode(activationCache[self.sae.cfg.hook_name])
-        breakpoint();
         # get top_k of 1
         # self.sae_out = sae.decode(sv_feature_acts) 
         return self.sae.decode(sv_feature_acts), sv_feature_acts
@@ -68,17 +67,15 @@ class Inference:
 
     def _get_features(self, sv_feature_activations):
         # return torch.topk(sv_feature_acts, 1).indices.tolist()
-        print(f'is this a single index? {torch.topk(sv_feature_activations, 1).indices}')
         features = torch.topk(sv_feature_activations, 1).indices
         print(f'features that align with the text prompt: {features}')
+        print("pump the features into the tool that gives you the words associated with each feature")
         return features
 
     
     def _get_steering_hook(self, feature, sae_out):
         coeff = self.coeff
         steering_vector = self.sae.W_dec[feature]
-        # if this works, enforce sending one word at a time
-        breakpoint();
         steering_vector = steering_vector[0]
         def steering_hook(resid_pre, hook):
             if resid_pre.shape[1] == 1:
@@ -91,10 +88,11 @@ class Inference:
         return steering_hook
 
     def _get_steering_hooks(self):
+        # TODO: refactor this. It works because sae_out.shape[1] = sv_feature_acts.shape[1] = len(features[0])
+        # you can manipulate views to retrieve hooks more cleanly
+        # and not use the seperate function _get_steering_hook()
         sae_out, sv_feature_acts = self._get_sae_out_and_feature_activations()
-        # breakpoint(); # what's the shape of sae_out? does it make sense to pass the whole thing to get_steering_hook every time?
         features = self._get_features(sv_feature_acts)
-        breakpoint();
         steering_hooks = [self._get_steering_hook(feature, sae_out) for feature in features[0]]
 
         return steering_hooks
@@ -102,7 +100,6 @@ class Inference:
 
     def _run_generate(self, example_prompt, steering_on: bool):
         
-
         self.model.reset_hooks()
         steer_hooks = self._get_steering_hooks()
         editing_hooks = [ (self.sae_id, steer_hook) for steer_hook in steer_hooks]
