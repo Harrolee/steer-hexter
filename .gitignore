@@ -1,0 +1,4 @@
+venv
+*.safetensors
+*.pyc
+.DS_Store
