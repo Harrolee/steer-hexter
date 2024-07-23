@@ -190,7 +190,7 @@ with gr.Blocks() as demo:
     # Set up an action when the sliders change
     temp.change(chatbot_model.set_temperature, inputs=[temp], outputs=[])
     coeff.change(chatbot_model.set_coeff, inputs=[coeff], outputs=[])
-    chatbot_model.set_steering_vector_prompt(steering_prompt)
+    chatbot_model.set_steering_vector_prompt(steering_prompt.value)
     steering_prompt.change(chatbot_model.set_steering_vector_prompt, inputs=[steering_prompt], outputs=[])
 
 demo.queue()
